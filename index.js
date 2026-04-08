@@ -235,7 +235,6 @@ async function getMovieDetailsWithIntermediateLinks(movieUrl) {
   const downloadsObj = {};
   
   for (const dl of details.downloads) {
-    // نحتفظ بالرابط الوسيط فقط، ولا نحاول جلب الرابط المباشر لتجنب الحظر
     downloadsObj[dl.quality] = {
       size: dl.size,
       watchUrl: dl.watchUrl,
@@ -251,32 +250,25 @@ async function getMovieDetailsWithIntermediateLinks(movieUrl) {
 
 // ---------- 4. API Routes ----------
 
-// نقطة نهاية ترحيبية (الرابط الأساسي)
-app.get('/', (req, res) => {
-  res.json({
-    success: true,
-    message: 'مرحباً بك في API بحث و تحميل افلام من منصه اكاوم by monte',
-    endpoints: {
-      search: '/?search=اسم_الفيلم',
-      movieDetails: '/?url=رابط_الفيلم'
-    },
-    example: {
-      search: 'https://monte-apis-dev-search-ak.vercel.app/?search=spider-man',
-      movieDetails: 'https://monte-apis-dev-search-ak.vercel.app/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
-    }
-  });
-});
-
-app.get('/api', async (req, res) => {
+// نقطة النهاية الرئيسية - تتعامل مع البحث والتفاصيل والترحيب
+app.get('/', async (req, res) => {
   const { search, url } = req.query;
-  try {
-    if (search) {
+  
+  // إذا كان هناك search، قم بالبحث
+  if (search && search.trim() !== '') {
+    try {
       console.log(`📥 طلب بحث: ${search}`);
       const results = await searchMovies(search, 3);
       console.log(`📤 إرجاع ${results.length} نتيجة`);
       return res.json({ success: true, data: results });
-    } 
-    else if (url) {
+    } catch (err) {
+      console.error('❌ خطأ في البحث:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  } 
+  // إذا كان هناك url، قم بجلب التفاصيل
+  else if (url && url.trim() !== '') {
+    try {
       console.log(`📥 طلب تفاصيل: ${url}`);
       const details = await getMovieDetailsWithIntermediateLinks(url);
       const orderedDetails = {
@@ -296,21 +288,25 @@ app.get('/api', async (req, res) => {
       };
       console.log(`📤 إرجاع تفاصيل فيلم: ${details.title}`);
       return res.json({ success: true, data: orderedDetails });
+    } catch (err) {
+      console.error('❌ خطأ في جلب التفاصيل:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
     }
-    else {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'يرجى توفير معامل search أو url',
-        example: {
-          search: '/?search=spider-man',
-          url: '/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
-        }
-      });
-    }
-  } catch (err) {
-    console.error('❌ خطأ:', err.message);
-    return res.status(500).json({ success: false, error: err.message });
   }
+  
+  // إذا لم يكن هناك search ولا url، أظهر رسالة الترحيب
+  res.json({
+    success: true,
+    message: 'مرحباً بك في API بحث و تحميل افلام من منصه اكاوم by monte',
+    endpoints: {
+      search: '/?search=اسم_الفيلم',
+      movieDetails: '/?url=رابط_الفيلم'
+    },
+    example: {
+      search: 'https://monte-apis-dev-search-ak.vercel.app/?search=spider-man',
+      movieDetails: 'https://monte-apis-dev-search-ak.vercel.app/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
+    }
+  });
 });
 
 app.listen(PORT, () => {
