@@ -45,13 +45,20 @@ async function searchMovies(query, maxPages = 3) {
   let allResults = [];
   let page = 1;
 
+  console.log(`🔍 جاري البحث عن: ${query}`);
+
   while (page <= maxPages) {
     const url = page === 1 ? baseUrl : `${baseUrl}&page=${page}`;
     try {
+      console.log(`📄 محاولة جلب الصفحة ${page}: ${url}`);
       const session = createSession();
-      const { data } = await session.get(url);
+      const { data, status } = await session.get(url);
+      console.log(`✅ تم جلب الصفحة ${page} - الحالة: ${status}`);
+      
       const $ = cheerio.load(data);
       const movieEntries = $('div.entry-box');
+
+      console.log(`📊 عدد النتائج في الصفحة ${page}: ${movieEntries.length}`);
 
       if (movieEntries.length === 0) break;
 
@@ -88,13 +95,16 @@ async function searchMovies(query, maxPages = 3) {
       const nextBtn = $('a:contains("التالي"), a:contains("next"), a:contains("»")').last();
       if (nextBtn.length === 0 || !nextBtn.attr('href')) break;
       
+      // تأخير بسيط بين الصفحات
       await new Promise(resolve => setTimeout(resolve, 1000));
       
     } catch (err) {
+      console.error(`❌ خطأ في الصفحة ${page}:`, err.message);
       break;
     }
   }
   
+  console.log(`🎯 إجمالي النتائج: ${allResults.length}`);
   return allResults;
 }
 
@@ -106,6 +116,7 @@ async function getMovieDetails(movieUrl) {
 
   const title = $('h1.entry-title').text().trim() || 'غير معروف';
 
+  // القصة
   let story = 'لا توجد قصة متاحة';
   const storyDiv = $('div.widget-body');
   if (storyDiv.length) {
@@ -117,6 +128,7 @@ async function getMovieDetails(movieUrl) {
     }
   }
 
+  // المعلومات الأساسية
   const info = {};
   $('div.font-size-16.text-white.mt-2').each((i, el) => {
     const text = $(el).text().trim();
@@ -140,6 +152,7 @@ async function getMovieDetails(movieUrl) {
   const year = info.year || 'غير محدد';
   const duration = info.duration || 'غير محدد';
 
+  // التواريخ
   let addedDate = 'غير محدد';
   let lastUpdate = 'غير محدد';
   const addedElem = $('div.font-size-14.text-muted.mt-3 span');
@@ -157,12 +170,14 @@ async function getMovieDetails(movieUrl) {
     }
   }
 
+  // الأنواع
   let genres = 'غير محدد';
   const genreLinks = $('div.d-flex.align-items-center.mt-3 a.badge-light');
   if (genreLinks.length) {
     genres = genreLinks.map((i, el) => $(el).text().trim()).get().join(', ');
   }
 
+  // فريق العمل
   const cast = [];
   $('div.entry-box-3').each((i, el) => {
     const img = $(el).find('img');
@@ -172,6 +187,7 @@ async function getMovieDetails(movieUrl) {
     if (name) cast.push({ name, image: imgUrl });
   });
 
+  // روابط التحميل الوسيطة
   const downloads = [];
   const tabs = $('div.tab-content.quality');
   tabs.each((i, tab) => {
@@ -197,112 +213,64 @@ async function getMovieDetails(movieUrl) {
   });
 
   return {
-    title, story, language, subtitle, quality, production, year, duration,
-    addedDate, lastUpdate, genres, cast, downloads,
+    title,
+    story,
+    language,
+    subtitle,
+    quality,
+    production,
+    year,
+    duration,
+    addedDate,
+    lastUpdate,
+    genres,
+    cast,
+    downloads,
   };
 }
 
-// ---------- 3. استخراج الرابط المباشر عبر وكيل ----------
-async function extractDirectLink(intermediateUrl) {
-  try {
-    // استخدام وكيل مجاني لتجنب حظر Vercel
-    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(intermediateUrl)}`;
-    
-    const resp = await axios.get(proxyUrl, {
-      headers: { 'User-Agent': getRandomUserAgent() },
-      timeout: 30000
-    });
-    
-    const html = resp.data;
-    let internalUrl = null;
-    
-    let match = html.match(/href=["'](https?:\/\/ak\.sv\/download\/\d+\/\d+\/[^"']+)["']/i);
-    if (match) internalUrl = match[1];
-    else {
-      const $ = cheerio.load(html);
-      const downloadLinkElem = $('a.download-link');
-      if (downloadLinkElem.length) internalUrl = downloadLinkElem.attr('href');
-    }
-    
-    if (!internalUrl) throw new Error('لم يتم العثور على رابط التحميل الداخلي');
-    if (internalUrl.startsWith('//')) internalUrl = 'https:' + internalUrl;
-    if (!internalUrl.startsWith('http')) internalUrl = 'https://ak.sv' + internalUrl;
-    
-    // جلب صفحة التحميل النهائية عبر الوكيل أيضاً
-    const resp2 = await axios.get(`https://api.allorigins.win/raw?url=${encodeURIComponent(internalUrl)}`, {
-      headers: { 'User-Agent': getRandomUserAgent() },
-      timeout: 30000
-    });
-    
-    const html2 = resp2.data;
-    
-    let directUrl = null;
-    const regex = /href=["'](https?:\/\/[^"']+downet\.net\/download\/[^"']+\.mp4[^"']*)["']/i;
-    const match2 = html2.match(regex);
-    if (match2) directUrl = match2[1];
-    
-    if (!directUrl) {
-      const regex2 = /https?:\/\/s\d+d\d+\.downet\.net\/download\/[^\s"']+\.mp4/i;
-      const match3 = html2.match(regex2);
-      if (match3) directUrl = match3[0];
-    }
-    
-    if (!directUrl) throw new Error('لم يتم العثور على رابط التحميل المباشر');
-    if (directUrl.startsWith('//')) directUrl = 'https:' + directUrl;
-    
-    return directUrl;
-    
-  } catch (err) {
-    throw new Error(`فشل استخراج الرابط المباشر: ${err.message}`);
-  }
-}
-
-// ---------- 4. جلب التفاصيل مع الروابط المباشرة ----------
-async function getMovieDetailsWithDirectLinks(movieUrl) {
+// ---------- 3. جلب التفاصيل مع الروابط الوسيطة فقط (لتفادي الحظر) ----------
+async function getMovieDetailsWithIntermediateLinks(movieUrl) {
   const details = await getMovieDetails(movieUrl);
   const downloadsObj = {};
   
   for (const dl of details.downloads) {
-    try {
-      const directLink = await extractDirectLink(dl.downloadUrl);
-      downloadsObj[dl.quality] = {
-        size: dl.size,
-        watchUrl: dl.watchUrl,
-        intermediateUrl: dl.downloadUrl,
-        directUrl: directLink,
-      };
-      // تأخير بين الطلبات
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (err) {
-      downloadsObj[dl.quality] = {
-        size: dl.size,
-        watchUrl: dl.watchUrl,
-        intermediateUrl: dl.downloadUrl,
-        directUrl: null,
-        error: err.message,
-      };
-    }
+    downloadsObj[dl.quality] = {
+      size: dl.size,
+      watchUrl: dl.watchUrl,
+      intermediateUrl: dl.downloadUrl,
+      directUrl: null,
+      message: "الرابط الوسيط يعمل بشكل طبيعي. اضغط عليه ثم اختر تحميل من الصفحة التي ستفتح."
+    };
   }
   
   details.downloads = downloadsObj;
   return details;
 }
 
-// ---------- 5. API Routes ----------
+// ---------- 4. API Routes ----------
+
+// نقطة النهاية الرئيسية - تتعامل مع البحث والتفاصيل والترحيب
 app.get('/', async (req, res) => {
   const { search, url } = req.query;
   
+  // إذا كان هناك search، قم بالبحث
   if (search && search.trim() !== '') {
     try {
+      console.log(`📥 طلب بحث: ${search}`);
       const results = await searchMovies(search, 3);
+      console.log(`📤 إرجاع ${results.length} نتيجة`);
       return res.json({ success: true, data: results });
     } catch (err) {
+      console.error('❌ خطأ في البحث:', err.message);
       return res.status(500).json({ success: false, error: err.message });
     }
   } 
+  // إذا كان هناك url، قم بجلب التفاصيل
   else if (url && url.trim() !== '') {
     try {
-      const details = await getMovieDetailsWithDirectLinks(url);
+      console.log(`📥 طلب تفاصيل: ${url}`);
+      const details = await getMovieDetailsWithIntermediateLinks(url);
       const orderedDetails = {
         title: details.title,
         story: details.story,
@@ -318,12 +286,15 @@ app.get('/', async (req, res) => {
         cast: details.cast,
         downloads: details.downloads,
       };
+      console.log(`📤 إرجاع تفاصيل فيلم: ${details.title}`);
       return res.json({ success: true, data: orderedDetails });
     } catch (err) {
+      console.error('❌ خطأ في جلب التفاصيل:', err.message);
       return res.status(500).json({ success: false, error: err.message });
     }
   }
   
+  // إذا لم يكن هناك search ولا url، أظهر رسالة الترحيب
   res.json({
     success: true,
     message: 'مرحباً بك في API بحث و تحميل افلام من منصه اكاوم by monte',
