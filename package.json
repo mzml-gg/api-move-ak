@@ -1,0 +1,21 @@
+{
+  "name": "akwam-api",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "API للبحث عن الأفلام واستخراج روابط التحميل من ak.sv",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "vercel-build": "echo Hello"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "author": "",
+  "license": "MIT"
+}
