@@ -229,82 +229,45 @@ async function getMovieDetails(movieUrl) {
   };
 }
 
-// ---------- 3. تحويل رابط وسيط إلى رابط مباشر نهائي ----------
-async function extractDirectLink(intermediateUrl) {
-  const session = createSession();
-  try {
-    let resp = await session.get(intermediateUrl, { maxRedirects: 5 });
-    let html = resp.data;
-    let internalUrl = null;
-
-    let match = html.match(/href=["'](https?:\/\/ak\.sv\/download\/\d+\/\d+\/[^"']+)["']/i);
-    if (match) internalUrl = match[1];
-    else {
-      const $ = cheerio.load(html);
-      const downloadLinkElem = $('a.download-link');
-      if (downloadLinkElem.length) internalUrl = downloadLinkElem.attr('href');
-    }
-
-    if (!internalUrl) throw new Error('لم يتم العثور على رابط التحميل الداخلي');
-    if (internalUrl.startsWith('//')) internalUrl = 'https:' + internalUrl;
-    if (!internalUrl.startsWith('http')) internalUrl = 'https://ak.sv' + internalUrl;
-
-    const resp2 = await session.get(internalUrl);
-    const html2 = resp2.data;
-    const $2 = cheerio.load(html2);
-
-    let directUrl = null;
-    const downloadBtn = $2('a.link');
-    if (downloadBtn.length) {
-      const href = downloadBtn.attr('href');
-      if (href && (href.includes('.mp4') || href.includes('/download/'))) directUrl = href;
-    }
-    if (!directUrl) {
-      const mp4Link = $2('a[href*=".mp4"]');
-      if (mp4Link.length) directUrl = mp4Link.attr('href');
-    }
-    if (!directUrl) {
-      const regex = /href=["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i;
-      const match2 = html2.match(regex);
-      if (match2) directUrl = match2[1];
-    }
-    if (!directUrl) throw new Error('لم يتم العثور على رابط التحميل المباشر النهائي');
-    if (directUrl.startsWith('//')) directUrl = 'https:' + directUrl;
-    return directUrl;
-  } catch (err) {
-    throw new Error(`فشل استخراج الرابط المباشر: ${err.message}`);
-  }
-}
-
-// ---------- 4. جلب التفاصيل مع تحويل الروابط إلى كائن منظم ----------
-async function getMovieDetailsWithDirectLinks(movieUrl) {
+// ---------- 3. جلب التفاصيل مع الروابط الوسيطة فقط (لتفادي الحظر) ----------
+async function getMovieDetailsWithIntermediateLinks(movieUrl) {
   const details = await getMovieDetails(movieUrl);
   const downloadsObj = {};
+  
   for (const dl of details.downloads) {
-    try {
-      const directLink = await extractDirectLink(dl.downloadUrl);
-      downloadsObj[dl.quality] = {
-        size: dl.size,
-        watchUrl: dl.watchUrl,
-        intermediateUrl: dl.downloadUrl,
-        directUrl: directLink,
-      };
-    } catch (err) {
-      downloadsObj[dl.quality] = {
-        size: dl.size,
-        watchUrl: dl.watchUrl,
-        intermediateUrl: dl.downloadUrl,
-        directUrl: null,
-        error: err.message,
-      };
-    }
+    // نحتفظ بالرابط الوسيط فقط، ولا نحاول جلب الرابط المباشر لتجنب الحظر
+    downloadsObj[dl.quality] = {
+      size: dl.size,
+      watchUrl: dl.watchUrl,
+      intermediateUrl: dl.downloadUrl,
+      directUrl: null,
+      message: "الرابط الوسيط يعمل بشكل طبيعي. اضغط عليه ثم اختر تحميل من الصفحة التي ستفتح."
+    };
   }
+  
   details.downloads = downloadsObj;
   return details;
 }
 
-// ---------- 5. API Routes ----------
-app.get('/', async (req, res) => {
+// ---------- 4. API Routes ----------
+
+// نقطة نهاية ترحيبية (الرابط الأساسي)
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    message: 'مرحباً بك في API بحث و تحميل افلام من منصه اكاوم by monte',
+    endpoints: {
+      search: '/?search=اسم_الفيلم',
+      movieDetails: '/?url=رابط_الفيلم'
+    },
+    example: {
+      search: 'https://monte-apis-dev-search-ak.vercel.app/?search=spider-man',
+      movieDetails: 'https://monte-apis-dev-search-ak.vercel.app/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
+    }
+  });
+});
+
+app.get('/api', async (req, res) => {
   const { search, url } = req.query;
   try {
     if (search) {
@@ -315,7 +278,7 @@ app.get('/', async (req, res) => {
     } 
     else if (url) {
       console.log(`📥 طلب تفاصيل: ${url}`);
-      const details = await getMovieDetailsWithDirectLinks(url);
+      const details = await getMovieDetailsWithIntermediateLinks(url);
       const orderedDetails = {
         title: details.title,
         story: details.story,
@@ -335,7 +298,14 @@ app.get('/', async (req, res) => {
       return res.json({ success: true, data: orderedDetails });
     }
     else {
-      return res.status(400).json({ success: false, error: 'يرجى توفير معامل search أو url' });
+      return res.status(400).json({ 
+        success: false, 
+        error: 'يرجى توفير معامل search أو url',
+        example: {
+          search: '/?search=spider-man',
+          url: '/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
+        }
+      });
     }
   } catch (err) {
     console.error('❌ خطأ:', err.message);
