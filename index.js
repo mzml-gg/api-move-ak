@@ -5,16 +5,36 @@ import * as cheerio from 'cheerio';
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// قائمة User-Agents مختلفة للتبديل بينها
+const userAgents = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
+];
+
+function getRandomUserAgent() {
+  return userAgents[Math.floor(Math.random() * userAgents.length)];
+}
+
 // ---------- إنشاء جلسة Axios مع headers ----------
 function createSession() {
   return axios.create({
     headers: {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      'Accept-Language': 'ar,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+      'User-Agent': getRandomUserAgent(),
+      'Accept-Language': 'ar,en;q=0.9,en-US;q=0.8',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Cache-Control': 'max-age=0',
       'Referer': 'https://ak.sv/',
     },
-    timeout: 15000,
+    timeout: 30000,
+    decompress: true,
   });
 }
 
@@ -67,14 +87,18 @@ async function searchMovies(query, maxPages = 3) {
 
       const nextBtn = $('a:contains("التالي"), a:contains("next"), a:contains("»")').last();
       if (nextBtn.length === 0 || !nextBtn.attr('href')) break;
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
     } catch (err) {
       break;
     }
   }
+  
   return allResults;
 }
 
-// ---------- 2. جلب جميع تفاصيل الفيلم (بدون تحويل الروابط) ----------
+// ---------- 2. جلب جميع تفاصيل الفيلم ----------
 async function getMovieDetails(movieUrl) {
   const session = createSession();
   const { data } = await session.get(movieUrl);
@@ -82,7 +106,6 @@ async function getMovieDetails(movieUrl) {
 
   const title = $('h1.entry-title').text().trim() || 'غير معروف';
 
-  // القصة
   let story = 'لا توجد قصة متاحة';
   const storyDiv = $('div.widget-body');
   if (storyDiv.length) {
@@ -94,7 +117,6 @@ async function getMovieDetails(movieUrl) {
     }
   }
 
-  // المعلومات الأساسية
   const info = {};
   $('div.font-size-16.text-white.mt-2').each((i, el) => {
     const text = $(el).text().trim();
@@ -118,7 +140,6 @@ async function getMovieDetails(movieUrl) {
   const year = info.year || 'غير محدد';
   const duration = info.duration || 'غير محدد';
 
-  // التواريخ
   let addedDate = 'غير محدد';
   let lastUpdate = 'غير محدد';
   const addedElem = $('div.font-size-14.text-muted.mt-3 span');
@@ -136,14 +157,12 @@ async function getMovieDetails(movieUrl) {
     }
   }
 
-  // الأنواع
   let genres = 'غير محدد';
   const genreLinks = $('div.d-flex.align-items-center.mt-3 a.badge-light');
   if (genreLinks.length) {
     genres = genreLinks.map((i, el) => $(el).text().trim()).get().join(', ');
   }
 
-  // فريق العمل
   const cast = [];
   $('div.entry-box-3').each((i, el) => {
     const img = $(el).find('img');
@@ -153,7 +172,6 @@ async function getMovieDetails(movieUrl) {
     if (name) cast.push({ name, image: imgUrl });
   });
 
-  // روابط التحميل الوسيطة
   const downloads = [];
   const tabs = $('div.tab-content.quality');
   tabs.each((i, tab) => {
@@ -179,30 +197,25 @@ async function getMovieDetails(movieUrl) {
   });
 
   return {
-    title,
-    story,
-    language,
-    subtitle,
-    quality,
-    production,
-    year,
-    duration,
-    addedDate,
-    lastUpdate,
-    genres,
-    cast,
-    downloads,
+    title, story, language, subtitle, quality, production, year, duration,
+    addedDate, lastUpdate, genres, cast, downloads,
   };
 }
 
-// ---------- 3. تحويل رابط وسيط إلى رابط مباشر نهائي ----------
+// ---------- 3. استخراج الرابط المباشر عبر وكيل ----------
 async function extractDirectLink(intermediateUrl) {
-  const session = createSession();
   try {
-    let resp = await session.get(intermediateUrl, { maxRedirects: 5 });
-    let html = resp.data;
+    // استخدام وكيل مجاني لتجنب حظر Vercel
+    const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(intermediateUrl)}`;
+    
+    const resp = await axios.get(proxyUrl, {
+      headers: { 'User-Agent': getRandomUserAgent() },
+      timeout: 30000
+    });
+    
+    const html = resp.data;
     let internalUrl = null;
-
+    
     let match = html.match(/href=["'](https?:\/\/ak\.sv\/download\/\d+\/\d+\/[^"']+)["']/i);
     if (match) internalUrl = match[1];
     else {
@@ -210,43 +223,45 @@ async function extractDirectLink(intermediateUrl) {
       const downloadLinkElem = $('a.download-link');
       if (downloadLinkElem.length) internalUrl = downloadLinkElem.attr('href');
     }
-
+    
     if (!internalUrl) throw new Error('لم يتم العثور على رابط التحميل الداخلي');
     if (internalUrl.startsWith('//')) internalUrl = 'https:' + internalUrl;
     if (!internalUrl.startsWith('http')) internalUrl = 'https://ak.sv' + internalUrl;
-
-    const resp2 = await session.get(internalUrl);
+    
+    // جلب صفحة التحميل النهائية عبر الوكيل أيضاً
+    const resp2 = await axios.get(`https://api.allorigins.win/raw?url=${encodeURIComponent(internalUrl)}`, {
+      headers: { 'User-Agent': getRandomUserAgent() },
+      timeout: 30000
+    });
+    
     const html2 = resp2.data;
-    const $2 = cheerio.load(html2);
-
+    
     let directUrl = null;
-    const downloadBtn = $2('a.link');
-    if (downloadBtn.length) {
-      const href = downloadBtn.attr('href');
-      if (href && (href.includes('.mp4') || href.includes('/download/'))) directUrl = href;
-    }
+    const regex = /href=["'](https?:\/\/[^"']+downet\.net\/download\/[^"']+\.mp4[^"']*)["']/i;
+    const match2 = html2.match(regex);
+    if (match2) directUrl = match2[1];
+    
     if (!directUrl) {
-      const mp4Link = $2('a[href*=".mp4"]');
-      if (mp4Link.length) directUrl = mp4Link.attr('href');
+      const regex2 = /https?:\/\/s\d+d\d+\.downet\.net\/download\/[^\s"']+\.mp4/i;
+      const match3 = html2.match(regex2);
+      if (match3) directUrl = match3[0];
     }
-    if (!directUrl) {
-      const regex = /href=["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i;
-      const match2 = html2.match(regex);
-      if (match2) directUrl = match2[1];
-    }
-    if (!directUrl) throw new Error('لم يتم العثور على رابط التحميل المباشر النهائي');
+    
+    if (!directUrl) throw new Error('لم يتم العثور على رابط التحميل المباشر');
     if (directUrl.startsWith('//')) directUrl = 'https:' + directUrl;
+    
     return directUrl;
+    
   } catch (err) {
     throw new Error(`فشل استخراج الرابط المباشر: ${err.message}`);
   }
 }
 
-// ---------- 4. دالة جلب التفاصيل مع تحويل الروابط إلى كائن منظم ----------
+// ---------- 4. جلب التفاصيل مع الروابط المباشرة ----------
 async function getMovieDetailsWithDirectLinks(movieUrl) {
   const details = await getMovieDetails(movieUrl);
-  // تحويل مصفوفة downloads إلى كائن بمفاتيح الجودة
   const downloadsObj = {};
+  
   for (const dl of details.downloads) {
     try {
       const directLink = await extractDirectLink(dl.downloadUrl);
@@ -256,6 +271,8 @@ async function getMovieDetailsWithDirectLinks(movieUrl) {
         intermediateUrl: dl.downloadUrl,
         directUrl: directLink,
       };
+      // تأخير بين الطلبات
+      await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (err) {
       downloadsObj[dl.quality] = {
         size: dl.size,
@@ -266,6 +283,7 @@ async function getMovieDetailsWithDirectLinks(movieUrl) {
       };
     }
   }
+  
   details.downloads = downloadsObj;
   return details;
 }
@@ -273,14 +291,18 @@ async function getMovieDetailsWithDirectLinks(movieUrl) {
 // ---------- 5. API Routes ----------
 app.get('/', async (req, res) => {
   const { search, url } = req.query;
-  try {
-    if (search) {
+  
+  if (search && search.trim() !== '') {
+    try {
       const results = await searchMovies(search, 3);
       return res.json({ success: true, data: results });
-    } 
-    else if (url) {
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  } 
+  else if (url && url.trim() !== '') {
+    try {
       const details = await getMovieDetailsWithDirectLinks(url);
-      // إعادة ترتيب الحقول حسب الرغبة
       const orderedDetails = {
         title: details.title,
         story: details.story,
@@ -297,14 +319,23 @@ app.get('/', async (req, res) => {
         downloads: details.downloads,
       };
       return res.json({ success: true, data: orderedDetails });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err.message });
     }
-    else {
-      return res.status(400).json({ success: false, error: 'يرجى توفير معامل search أو url' });
-    }
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ success: false, error: err.message });
   }
+  
+  res.json({
+    success: true,
+    message: 'مرحباً بك في API بحث و تحميل افلام من منصه اكاوم by monte',
+    endpoints: {
+      search: '/?search=اسم_الفيلم',
+      movieDetails: '/?url=رابط_الفيلم'
+    },
+    example: {
+      search: 'https://monte-apis-dev-search-ak.vercel.app/?search=spider-man',
+      movieDetails: 'https://monte-apis-dev-search-ak.vercel.app/?url=https://ak.sv/movie/8601/spider-man-across-the-spider-verse'
+    }
+  });
 });
 
 app.listen(PORT, () => {
